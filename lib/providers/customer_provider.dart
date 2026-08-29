@@ -2,10 +2,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/customer.dart';
 import '../repositories/customer_repository.dart';
-import 'sync_provider.dart';
+import '../repositories/customer_repository_contract.dart';
+import '../repositories/firestore_customer_repository.dart';
 
-final customerRepositoryProvider = Provider<CustomerRepository>((ref) {
-  return CustomerRepository();
+final customerDataSourceProvider = StateProvider<CustomerDataSource>(
+  (ref) => CustomerDataSource.sqlite,
+);
+
+final customerRepositoryProvider = Provider<BaseCustomerRepository>((ref) {
+  final dataSource = ref.watch(customerDataSourceProvider);
+
+  switch (dataSource) {
+    case CustomerDataSource.sqlite:
+      return CustomerRepository();
+    case CustomerDataSource.firebase:
+      return FirestoreCustomerRepository();
+  }
 });
 
 final customerProvider =
@@ -14,170 +26,92 @@ final customerProvider =
     );
 
 class CustomerNotifier extends AsyncNotifier<List<Customer>> {
-  late final CustomerRepository _repository;
+  BaseCustomerRepository get _repository =>
+      ref.read(customerRepositoryProvider);
 
   @override
   Future<List<Customer>> build() async {
-    _repository = ref.read(customerRepositoryProvider);
-
-    // SQLite → UI immediately
-    final customers = await _repository.getCustomers();
-
-    // Firebase sync background mein
-    _syncInBackground();
-
-    return customers;
+    return _repository.getCustomers();
   }
-
-  // =========================================================
-  // BACKGROUND SYNC
-  // =========================================================
-
-  Future<void> _syncInBackground() async {
-    try {
-      await ref.read(syncProvider.notifier).sync();
-
-      // Firebase → SQLite ke baad
-      // latest local data reload
-      final customers = await _repository.getCustomers();
-
-      state = AsyncData(customers);
-    } catch (_) {
-      // Offline ho to SQLite data continue karega.
-    }
-  }
-
-  // =========================================================
-  // REFRESH
-  // =========================================================
 
   Future<void> refresh() async {
-    try {
-      final customers = await _repository.getCustomers();
+    state = const AsyncLoading();
 
-      state = AsyncData(customers);
-
-      _syncInBackground();
-    } catch (e, stackTrace) {
-      state = AsyncError(e, stackTrace);
-    }
+    state = await AsyncValue.guard(_repository.getCustomers);
   }
-
-  // =========================================================
-  // ADD CUSTOMER
-  // =========================================================
 
   Future<bool> addCustomer(Customer customer) async {
     try {
       await _repository.addCustomer(customer);
-
-      final customers = await _repository.getCustomers();
-
-      state = AsyncData(customers);
-
-      _syncInBackground();
-
+      await refresh();
       return true;
     } catch (e, stackTrace) {
       state = AsyncError(e, stackTrace);
-
       return false;
     }
   }
-
-  // =========================================================
-  // UPDATE CUSTOMER
-  // =========================================================
 
   Future<bool> updateCustomer(Customer customer) async {
     try {
-      await _repository.updateCustomer(customer);
-
-      final customers = await _repository.getCustomers();
-
-      state = AsyncData(customers);
-
-      _syncInBackground();
-
+      await _repository.updateCustomer(
+        customer,
+        id: customer.id ?? customer.firebaseId,
+      );
+      await refresh();
       return true;
     } catch (e, stackTrace) {
       state = AsyncError(e, stackTrace);
-
       return false;
     }
   }
 
-  // =========================================================
-  // DEACTIVATE
-  // =========================================================
-
-  Future<bool> deleteCustomer(int id) async {
-    try {
-      await _repository.deleteCustomer(id);
-
-      final customers = await _repository.getCustomers();
-
-      state = AsyncData(customers);
-
-      _syncInBackground();
-
-      return true;
-    } catch (e, stackTrace) {
-      state = AsyncError(e, stackTrace);
-
-      return false;
-    }
-  }
-
-  // =========================================================
-  // ACTIVATE / DEACTIVATE
-  // =========================================================
-
-  Future<bool> setActive({required int id, required bool isActive}) async {
+  Future<bool> setActive(Object id, bool isActive) async {
     try {
       await _repository.setActive(id, isActive);
-
-      final customers = await _repository.getCustomers();
-
-      state = AsyncData(customers);
-
-      _syncInBackground();
-
+      await refresh();
       return true;
     } catch (e, stackTrace) {
       state = AsyncError(e, stackTrace);
-
       return false;
     }
   }
 
-  // =========================================================
-  // RESTORE
-  // =========================================================
-
-  Future<bool> restoreCustomer(int id) async {
+  Future<bool> deleteCustomer(Object id) async {
     try {
-      await _repository.restoreCustomer(id);
-
-      final customers = await _repository.getCustomers();
-
-      state = AsyncData(customers);
-
-      _syncInBackground();
-
+      await _repository.deleteCustomer(id);
+      await refresh();
       return true;
     } catch (e, stackTrace) {
       state = AsyncError(e, stackTrace);
-
       return false;
     }
   }
 
-  // =========================================================
-  // SEARCH
-  // =========================================================
+  Future<bool> restoreCustomer(Object id) async {
+    try {
+      if (id is int) {
+        await (ref.read(customerRepositoryProvider) as CustomerRepository)
+            .restoreCustomer(id);
+      } else {
+        await _repository.setActive(id, true);
+      }
+      await refresh();
+      return true;
+    } catch (e, stackTrace) {
+      state = AsyncError(e, stackTrace);
+      return false;
+    }
+  }
+
+  Future<Customer?> getCustomerById(Object id) async {
+    return _repository.getCustomerById(id);
+  }
 
   Future<List<Customer>> search(String keyword) async {
-    return _repository.searchCustomers(keyword);
+    if (keyword.trim().isEmpty) {
+      return state.valueOrNull ?? [];
+    }
+
+    return _repository.searchCustomers(keyword.trim());
   }
 }

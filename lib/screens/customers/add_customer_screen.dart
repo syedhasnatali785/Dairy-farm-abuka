@@ -1,5 +1,5 @@
 import 'package:dairyfarmabuka/models/customer.dart';
-import 'package:dairyfarmabuka/providers/firestore_customer_provider.dart';
+import 'package:dairyfarmabuka/providers/customer_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -53,9 +53,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
       _saving = true;
     });
 
-    final success = await ref
-        .read(firestoreCustomerProvider.notifier)
-        .addCustomer(customer);
+    final success = await ref.read(customerProvider.notifier).addCustomer(customer);
 
     if (!mounted) return;
 
@@ -70,7 +68,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
 
       Navigator.pop(context, true);
     } else {
-      final error = ref.read(firestoreCustomerProvider).error;
+      final error = ref.read(customerProvider).error;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error?.toString() ?? 'Failed to add customer.')),

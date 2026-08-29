@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../models/owner.dart';
+import '../../providers/owner_provider.dart';
+
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
 
@@ -14,13 +17,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final _ownerNameController = TextEditingController();
-
   final _farmNameController = TextEditingController();
-
   final _phoneController = TextEditingController();
-
   final _addressController = TextEditingController();
-
   final _predictionController = TextEditingController();
 
   bool _isSaving = false;
@@ -35,10 +34,16 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     super.dispose();
   }
 
-  Future<void> _completeOnboarding() async {
+  Future<void> _completeSetup() async {
     FocusScope.of(context).unfocus();
 
     if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    final prediction = double.tryParse(_predictionController.text.trim());
+
+    if (prediction == null || prediction <= 0) {
       return;
     }
 
@@ -47,28 +52,23 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     });
 
     try {
-      final prediction = double.parse(_predictionController.text.trim());
+      final owner = Owner(
+        name: _ownerNameController.text.trim(),
+        farmName: _farmNameController.text.trim(),
+        phone: _phoneController.text.trim(),
+        address: _addressController.text.trim(),
+        prediction: prediction,
+      );
+
+      await ref.read(ownerProvider.notifier).saveOwner(owner);
+
+      final ownerState = ref.read(ownerProvider);
+
+      if (ownerState.hasError) {
+        throw ownerState.error!;
+      }
 
       final prefs = await SharedPreferences.getInstance();
-
-      // ------------------------------------------------------
-      // Local onboarding data
-      // ------------------------------------------------------
-
-      await prefs.setString('owner_name', _ownerNameController.text.trim());
-
-      await prefs.setString('farm_name', _farmNameController.text.trim());
-
-      await prefs.setString('owner_phone', _phoneController.text.trim());
-
-      await prefs.setString('farm_address', _addressController.text.trim());
-
-      await prefs.setDouble('predicted_daily_milk', prediction);
-
-      // ------------------------------------------------------
-      // Mark onboarding complete only after all local data
-      // has been saved successfully.
-      // ------------------------------------------------------
 
       await prefs.setBool('onboarding_completed', true);
 
@@ -78,7 +78,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     } catch (_) {
       if (!mounted) return;
 
-      _showMessage('Unable to save farm details. Please try again.');
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to save farm details. Please try again.'),
+          ),
+        );
     } finally {
       if (mounted) {
         setState(() {
@@ -86,12 +92,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         });
       }
     }
-  }
-
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -116,15 +116,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               const SizedBox(height: 8),
 
               Text(
-                'Enter your farm information to get started.',
+                'Enter your farm details to get started.',
                 style: theme.textTheme.bodyMedium,
               ),
 
               const SizedBox(height: 28),
 
-              // =================================================
-              // OWNER
-              // =================================================
               Text(
                 'Owner Details',
                 style: theme.textTheme.titleMedium?.copyWith(
@@ -132,7 +129,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 ),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
 
               TextFormField(
                 controller: _ownerNameController,
@@ -176,9 +173,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
               const SizedBox(height: 24),
 
-              // =================================================
-              // FARM
-              // =================================================
               Text(
                 'Farm Details',
                 style: theme.textTheme.titleMedium?.copyWith(
@@ -186,7 +180,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 ),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
 
               TextFormField(
                 controller: _farmNameController,
@@ -210,8 +204,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               TextFormField(
                 controller: _addressController,
                 textCapitalization: TextCapitalization.sentences,
-                maxLines: 2,
                 textInputAction: TextInputAction.next,
+                maxLines: 2,
                 decoration: const InputDecoration(
                   labelText: 'Farm Address',
                   prefixIcon: Icon(Icons.location_on_outlined),
@@ -227,17 +221,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
               const SizedBox(height: 24),
 
-              // =================================================
-              // MILK PREDICTION
-              // =================================================
               Text(
-                'Daily Milk Prediction',
+                'Milk Prediction',
                 style: theme.textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
 
               TextFormField(
                 controller: _predictionController,
@@ -259,34 +250,24 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   final amount = double.tryParse(value.trim());
 
                   if (amount == null || amount <= 0) {
-                    return 'Enter a valid milk quantity';
+                    return 'Enter a valid quantity';
                   }
 
                   return null;
                 },
                 onFieldSubmitted: (_) {
                   if (!_isSaving) {
-                    _completeOnboarding();
+                    _completeSetup();
                   }
                 },
               ),
 
-              const SizedBox(height: 12),
-
-              Text(
-                'You can change this later from Settings.',
-                style: theme.textTheme.bodySmall,
-              ),
-
               const SizedBox(height: 32),
 
-              // =================================================
-              // COMPLETE
-              // =================================================
               SizedBox(
                 height: 52,
                 child: FilledButton(
-                  onPressed: _isSaving ? null : _completeOnboarding,
+                  onPressed: _isSaving ? null : _completeSetup,
                   child: _isSaving
                       ? const SizedBox(
                           width: 22,
@@ -295,14 +276,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         )
                       : const Text('COMPLETE SETUP'),
                 ),
-              ),
-
-              const SizedBox(height: 16),
-
-              Text(
-                'You can add customers from the home screen after setup.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall,
               ),
             ],
           ),

@@ -129,30 +129,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 8),
 
-          RadioListTile<String>(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Bought Customers'),
-            subtitle: const Text('Select customers who bought milk.'),
-            value: 'bought',
-            groupValue: _milkMode,
-            onChanged: (value) {
-              if (value != null) {
-                _saveMode(value);
-              }
-            },
-          ),
-
-          RadioListTile<String>(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Not Bought Customers'),
-            subtitle: const Text('Select customers who did not buy milk.'),
-            value: 'notBought',
-            groupValue: _milkMode,
-            onChanged: (value) {
-              if (value != null) {
-                _saveMode(value);
-              }
-            },
+          Column(
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Bought Customers'),
+                subtitle: const Text('Select customers who bought milk.'),
+                leading: Radio<String>(
+                  value: 'bought',
+                  groupValue: _milkMode,
+                  onChanged: (value) {
+                    if (value != null) {
+                      _saveMode(value);
+                    }
+                  },
+                ),
+                onTap: () {
+                  _saveMode('bought');
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Not Bought Customers'),
+                subtitle: const Text('Select customers who did not buy milk.'),
+                leading: Radio<String>(
+                  value: 'notBought',
+                  groupValue: _milkMode,
+                  onChanged: (value) {
+                    if (value != null) {
+                      _saveMode(value);
+                    }
+                  },
+                ),
+                onTap: () {
+                  _saveMode('notBought');
+                },
+              ),
+            ],
           ),
 
           const Divider(height: 32),

@@ -1,150 +1,216 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:dairyfarmabuka/core/database/app_database.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:sqflite/sqlite_api.dart';
+import 'package:flutter/foundation.dart';
+
+import '../core/database/app_database.dart';
 
 class SyncService {
-  SyncService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  SyncService._();
 
-  final FirebaseFirestore _firestore;
-  final FirebaseAuth _auth;
-  Future<Database> get _db async {
-    return AppDatabase.instance.database;
-  }
+  static final SyncService instance = SyncService._();
 
-  String get _uid {
-    final user = _auth.currentUser;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-    if (user == null) {
-      throw Exception('User is not logged in.');
-    }
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
-    return user.uid;
-  }
+  final AppDatabase _database = AppDatabase.instance;
 
-  CollectionReference<Map<String, dynamic>> get _customers {
-    return _firestore.collection('owners').doc(_uid).collection('customers');
-  }
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
-  Future<void> syncCustomersFromFirebase() async {
-    final db = await _db;
+  bool _isSyncing = false;
 
-    final snapshot = await _customers.get();
+  Future<void> initialize() async {
+    await _syncIfOnline();
 
-    await db.transaction((txn) async {
-      for (final doc in snapshot.docs) {
-        final data = doc.data();
+    _connectivitySubscription ??= Connectivity().onConnectivityChanged.listen((
+      results,
+    ) async {
+      final online = results.any((result) => result != ConnectivityResult.none);
 
-        final firebaseId = doc.id;
-
-        final existing = await txn.query(
-          'customers',
-          where: 'firebaseId = ?',
-          whereArgs: [firebaseId],
-          limit: 1,
-        );
-
-        final values = {
-          'name': data['name'] ?? '',
-          'phone': data['phone'] ?? '',
-          'address': data['address'] ?? '',
-          'dailyMilk': _toDouble(data['dailyMilk']),
-          'pricePerLiter': _toDouble(data['pricePerLiter']),
-          'customerType': data['customerType'] ?? 'DAILY',
-          'isActive': data['isActive'] == true ? 1 : 0,
-          'firebaseId': firebaseId,
-        };
-
-        if (existing.isEmpty) {
-          await txn.insert(
-            'customers',
-            values,
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        } else {
-          await txn.update(
-            'customers',
-            values,
-            where: 'firebaseId = ?',
-            whereArgs: [firebaseId],
-          );
-        }
+      if (online) {
+        await _syncIfOnline();
       }
     });
   }
 
-  Future<void> syncCustomersToFirebase() async {
-    final db = await _db;
-
-    final customers = await db.query('customers');
-
-    for (final customer in customers) {
-      final firebaseId = customer['firebaseId']?.toString();
-
-      final data = {
-        'name': customer['name'] ?? '',
-        'phone': customer['phone'] ?? '',
-        'address': customer['address'] ?? '',
-        'dailyMilk': _toDouble(customer['dailyMilk']),
-        'pricePerLiter': _toDouble(customer['pricePerLiter']),
-        'customerType': customer['customerType'] ?? 'DAILY',
-        'isActive': customer['isActive'] == 1,
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-
-      if (firebaseId == null || firebaseId.isEmpty) {
-        final doc = await _customers.add(data);
-
-        await db.update(
-          'customers',
-          {'firebaseId': doc.id},
-          where: 'id = ?',
-          whereArgs: [customer['id']],
-        );
-      } else {
-        await _customers.doc(firebaseId).set(data, SetOptions(merge: true));
-      }
-    }
+  Future<void> dispose() async {
+    await _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
   }
 
-  Future<void> syncCustomers() async {
-    if (_auth.currentUser == null) {
-      return;
-    }
-
-    await syncCustomersToFirebase();
-    await syncCustomersFromFirebase();
+  Future<void> syncNow() async {
+    await _syncIfOnline();
   }
 
   Future<void> syncAll() async {
-    if (_auth.currentUser == null) {
-      return;
-    }
-    Future<void> syncAll() async {
-      if (_auth.currentUser == null) {
-        return;
-      }
-
-      try {
-        await syncCustomers();
-      } catch (e) {
-        // Offline / Firebase error.
-        //
-        // App continues working from SQLite.
-        //
-        // We intentionally don't throw here.
-        print('Sync failed: $e');
-      }
-    }
-  }
-}
-
-double _toDouble(dynamic value) {
-  if (value is num) {
-    return value.toDouble();
+    await _syncIfOnline();
   }
 
-  return double.tryParse(value?.toString() ?? '') ?? 0;
+  Future<void> _syncIfOnline() async {
+    if (_isSyncing) return;
+
+    final user = _auth.currentUser;
+
+    if (user == null) return;
+
+    final connectivity = await Connectivity().checkConnectivity();
+
+    final online = connectivity.any(
+      (result) => result != ConnectivityResult.none,
+    );
+
+    if (!online) return;
+
+    _isSyncing = true;
+
+    try {
+      await _syncOwner(user.uid);
+      await _syncCustomers(user.uid);
+      await _syncMilkEntries(user.uid);
+      await _syncMilkDeliveries(user.uid);
+    } catch (e, stackTrace) {
+      debugPrint('Sync error: $e\n$stackTrace');
+    } finally {
+      _isSyncing = false;
+    }
+  }
+
+  // ===========================================================
+  // OWNER
+  // ===========================================================
+
+  Future<void> _syncOwner(String uid) async {
+    final db = await _database.database;
+
+    final rows = await db.query('owner', limit: 1);
+
+    if (rows.isEmpty) return;
+
+    final owner = rows.first;
+
+    final doc = _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('owner')
+        .doc('profile');
+
+    await doc.set({
+      'id': owner['id'],
+      'name': owner['name'],
+      'farmName': owner['farmName'],
+      'phone': owner['phone'],
+      'address': owner['address'],
+      'prediction': owner['prediction'],
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  // ===========================================================
+  // CUSTOMERS
+  // ===========================================================
+
+  Future<void> _syncCustomers(String uid) async {
+    final db = await _database.database;
+
+    final customers = await db.query('customers');
+
+    final batch = _firestore.batch();
+
+    final collection = _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('customers');
+
+    for (final customer in customers) {
+      final id = customer['id'];
+
+      if (id == null) continue;
+
+      final document = collection.doc(id.toString());
+
+      batch.set(document, {
+        'id': id,
+        'name': customer['name'],
+        'phone': customer['phone'],
+        'address': customer['address'],
+        'dailyMilk': customer['dailyMilk'],
+        'pricePerLiter': customer['pricePerLiter'],
+        'customerType': customer['customerType'],
+        'isActive': customer['isActive'],
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+
+    await batch.commit();
+  }
+
+  // ===========================================================
+  // MILK ENTRIES
+  // ===========================================================
+
+  Future<void> _syncMilkEntries(String uid) async {
+    final db = await _database.database;
+
+    final entries = await db.query('milk_entry');
+
+    final batch = _firestore.batch();
+
+    final collection = _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('milk_entries');
+
+    for (final entry in entries) {
+      final id = entry['id'];
+
+      if (id == null) continue;
+
+      batch.set(collection.doc(id.toString()), {
+        'id': id,
+        'date': entry['date'],
+        'totalProduction': entry['totalProduction'],
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+
+    await batch.commit();
+  }
+
+  // ===========================================================
+  // MILK DELIVERIES
+  // ===========================================================
+
+  Future<void> _syncMilkDeliveries(String uid) async {
+    final db = await _database.database;
+
+    final deliveries = await db.query('milk_delivery');
+
+    final batch = _firestore.batch();
+
+    final collection = _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('milk_deliveries');
+
+    for (final delivery in deliveries) {
+      final id = delivery['id'];
+
+      if (id == null) continue;
+
+      batch.set(collection.doc(id.toString()), {
+        'id': id,
+        'milkEntryId': delivery['milkEntryId'],
+        'customerId': delivery['customerId'],
+        'deliveredMilk': delivery['deliveredMilk'],
+        'pricePerLiter': delivery['pricePerLiter'],
+        'bought': delivery['bought'],
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+
+    await batch.commit();
+  }
 }

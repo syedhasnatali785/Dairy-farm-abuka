@@ -19,6 +19,7 @@ class AppDatabase {
   Future<void> _onCreate(Database db, int version) async {
     await db.execute(''' CREATE TABLE owner(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        onboardingCompleted INT NOT NULL, 
         name TEXT NOT NULL,
         farmName TEXT NOT NULL,
         phone TEXT NOT NULL,

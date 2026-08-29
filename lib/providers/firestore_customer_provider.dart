@@ -35,9 +35,12 @@ class FirestoreCustomerNotifier extends AsyncNotifier<List<Customer>> {
     }
   }
 
-  Future<bool> updateCustomer(Customer customer, {required String id}) async {
+  Future<bool> updateCustomer(Customer customer) async {
     try {
-      await _repository.updateCustomer(id, customer);
+      await _repository.updateCustomer(
+        customer,
+        id: customer.firebaseId ?? customer.id,
+      );
       await refresh();
       return true;
     } catch (e, stackTrace) {
@@ -62,7 +65,7 @@ class FirestoreCustomerNotifier extends AsyncNotifier<List<Customer>> {
 
   Future<bool> setActive({required String id, required bool isActive}) async {
     try {
-      await _repository.setCustomerActive(id, isActive);
+      await _repository.setActive(id, isActive);
 
       await refresh();
 

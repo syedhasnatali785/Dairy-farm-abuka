@@ -30,20 +30,21 @@ class MilkRepository {
   Future<void> saveDay({
     required MilkEntry entry,
     required List<Customer> customers,
-    required Map<int, bool> selectedCustomers,
-    required bool boughtMode,
+    /// Map of customerId -> deliveredMilk (override). If a customer id is
+    /// missing the repository will use the customer's `dailyMilk` as default.
+    required Map<int, double> selectedCustomers,
   }) async {
     final db = await _db;
     await db.transaction((txn) async {
       final batch = txn.batch();
       final entryId = await txn.insert('milk_entry', entry.toMap());
       for (final customer in customers) {
-        final isSelected = selectedCustomers[customer.id] ?? false;
-        final bought = boughtMode ? isSelected : !isSelected;
+        final delivered = selectedCustomers[customer.id] ?? customer.dailyMilk;
+        final bought = delivered > 0;
         batch.insert('milk_delivery', {
           'milkEntryId': entryId,
           'customerId': customer.id,
-          'deliveredMilk': bought ? customer.dailyMilk : 0.0,
+          'deliveredMilk': delivered,
           'pricePerLiter': customer.pricePerLiter,
           'bought': bought ? 1 : 0,
         });

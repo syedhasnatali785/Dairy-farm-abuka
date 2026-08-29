@@ -1,8 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:dairyfarmabuka/models/milk_delivery.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:sqflite/sqlite_api.dart';
 
 class FirestoreMilkRepository {
   FirestoreMilkRepository({FirebaseFirestore? firestore, FirebaseAuth? auth})
@@ -44,7 +42,7 @@ class FirestoreMilkRepository {
         .where('dateKey', isEqualTo: dateKey)
         .limit(1)
         .get();
-    if (existing.docs.isEmpty) {
+    if (existing.docs.isNotEmpty) {
       throw Exception('Milk entry for this date already exists.');
     }
     final entryRef = _milkEntries.doc();

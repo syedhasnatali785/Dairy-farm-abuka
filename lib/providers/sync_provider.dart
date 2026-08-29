@@ -5,8 +5,9 @@ import 'package:dairyfarmabuka/services/sync_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final syncServiceProvider = Provider<SyncService>((ref) {
-  return SyncService();
+  return SyncService.instance;
 });
+
 final syncProvider = AsyncNotifierProvider<SyncNotifier, bool>(
   SyncNotifier.new,
 );
@@ -47,7 +48,7 @@ class SyncNotifier extends AsyncNotifier<bool> {
     state = const AsyncLoading();
 
     state = await AsyncValue.guard(() async {
-      await ref.read(syncServiceProvider).syncAll();
+      await ref.read(syncServiceProvider).syncNow();
 
       return true;
     });

@@ -1,50 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-class HomeScreen extends StatefulWidget {
+import '../../providers/customer_provider.dart';
+import '../../providers/milk_provider.dart';
+import '../../providers/owner_provider.dart';
+
+class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  String _ownerName = '';
-  String _farmName = '';
-  double _predictedMilk = 0;
-
-  bool _isLoading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadFarmData();
-  }
-
-  Future<void> _loadFarmData() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    if (!mounted) return;
-
-    setState(() {
-      _ownerName = prefs.getString('owner_name') ?? '';
-
-      _farmName = prefs.getString('farm_name') ?? '';
-
-      _predictedMilk = prefs.getDouble('predicted_daily_milk') ?? 0;
-
-      _isLoading = false;
-    });
-  }
-
-  Future<void> _refresh() async {
-    await _loadFarmData();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ownerAsync = ref.watch(ownerProvider);
+    final customersAsync = ref.watch(customerProvider);
+    final milkAsync = ref.watch(todayMilkProvider);
+    final soldAsync = ref.watch(todaySoldMilkProvider);
+    final revenueAsync = ref.watch(todayRevenueProvider);
+    final remainingAsync = ref.watch(todayRemainingMilkProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -59,180 +31,182 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _refresh,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
-                children: [
-                  // =================================================
-                  // GREETING
-                  // =================================================
-                  Text(
-                    'Hello${_ownerName.isEmpty ? '' : ', $_ownerName'} 👋',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
+      body: RefreshIndicator(
+        onRefresh: () async {
+          await Future.wait([
+            ref.read(ownerProvider.notifier).loadOwner(),
+            ref.read(customerProvider.notifier).refresh(),
+            ref.read(todayMilkProvider.notifier).refresh(),
+          ]);
+        },
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          children: [
+            ownerAsync.when(
+              loading: () => const LinearProgressIndicator(),
+              error: (_, _) => const Text('Unable to load farm details.'),
+              data: (owner) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      owner == null ? 'Hello 👋' : 'Hello, ${owner.name} 👋',
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
                     ),
-                  ),
-
-                  const SizedBox(height: 4),
-
-                  Text(
-                    _farmName.isEmpty ? 'Your Dairy Farm' : _farmName,
-                    style: theme.textTheme.bodyMedium,
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // =================================================
-                  // ANALYTICS
-                  // =================================================
-                  Text(
-                    'Today',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
+                    const SizedBox(height: 4),
+                    Text(
+                      owner?.farmName ?? 'Your Dairy Farm',
+                      style: Theme.of(context).textTheme.bodyMedium,
                     ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _AnalyticsCard(
-                          title: 'Production',
-                          value: '0 L',
-                          icon: Icons.water_drop_outlined,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _AnalyticsCard(
-                          title: 'Delivered',
-                          value: '0 L',
-                          icon: Icons.local_shipping_outlined,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _AnalyticsCard(
-                          title: 'Customers',
-                          value: '0',
-                          icon: Icons.people_outline,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _AnalyticsCard(
-                          title: 'Expected',
-                          value: '${_predictedMilk.toStringAsFixed(1)} L',
-                          icon: Icons.insights_outlined,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 28),
-
-                  // =================================================
-                  // QUICK ACTIONS
-                  // =================================================
-                  Text(
-                    'Quick Actions',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _ActionCard(
-                          title: 'Add Milk',
-                          subtitle: 'Record today\'s milk',
-                          icon: Icons.water_drop_outlined,
-                          onTap: () {
-                            context.push('/home/milk/add');
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _ActionCard(
-                          title: 'Customers',
-                          subtitle: 'Manage customers',
-                          icon: Icons.people_outline,
-                          onTap: () {
-                            context.push('/home/customers');
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 28),
-
-                  // =================================================
-                  // PREDICTION
-                  // =================================================
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.primaryContainer,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Icon(
-                              Icons.trending_up_outlined,
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Daily Target',
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  '${_predictedMilk.toStringAsFixed(1)} L expected today',
-                                  style: theme.textTheme.bodyMedium,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                  ],
+                );
+              },
             ),
 
-      // ===========================================================
-      // BOTTOM NAV / MAIN ACTION
-      // ===========================================================
+            const SizedBox(height: 24),
+
+            Text(
+              'Today',
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+            ),
+
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _AnalyticsCard(
+                    title: 'Production',
+                    value: milkAsync.when(
+                      loading: () => '...',
+                      error: (_, _) => '0 L',
+                      data: (entry) => entry == null
+                          ? '0 L'
+                          : '${entry.totalProduction.toStringAsFixed(1)} L',
+                    ),
+                    icon: Icons.water_drop_outlined,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _AnalyticsCard(
+                    title: 'Delivered',
+                    value: soldAsync.when(
+                      loading: () => '...',
+                      error: (_, _) => '0 L',
+                      data: (value) => '${value.toStringAsFixed(1)} L',
+                    ),
+                    icon: Icons.local_shipping_outlined,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _AnalyticsCard(
+                    title: 'Customers',
+                    value: customersAsync.when(
+                      loading: () => '...',
+                      error: (_, _) => '0',
+                      data: (customers) => customers.length.toString(),
+                    ),
+                    icon: Icons.people_outline,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _AnalyticsCard(
+                    title: 'Remaining',
+                    value: remainingAsync.when(
+                      loading: () => '...',
+                      error: (_, _) => '0 L',
+                      data: (value) => '${value.toStringAsFixed(1)} L',
+                    ),
+                    icon: Icons.inventory_2_outlined,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            _RevenueCard(revenueAsync: revenueAsync),
+
+            const SizedBox(height: 28),
+
+            Text(
+              'Quick Actions',
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+            ),
+
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _ActionCard(
+                    title: 'Add Milk',
+                    subtitle: 'Record today\'s milk',
+                    icon: Icons.water_drop_outlined,
+                    onTap: () async {
+                      final result = await context.push<bool>('/home/milk/add');
+
+                      if (result == true) {
+                        ref.read(todayMilkProvider.notifier).refresh();
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _ActionCard(
+                    title: 'Customers',
+                    subtitle: 'Manage customers',
+                    icon: Icons.people_outline,
+                    onTap: () {
+                      context.push('/home/customers');
+                    },
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 28),
+
+            ownerAsync.when(
+              loading: () => const SizedBox.shrink(),
+              error: (_, _) => const SizedBox.shrink(),
+              data: (owner) {
+                if (owner == null) {
+                  return const SizedBox.shrink();
+                }
+
+                return Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.insights_outlined),
+                    title: const Text('Daily Target'),
+                    subtitle: Text(
+                      '${owner.prediction.toStringAsFixed(1)} L predicted',
+                    ),
+                  ),
+                );
+              },
+            ),
+
+            const SizedBox(height: 100),
+          ],
+        ),
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
           context.push('/home/milk/add');
@@ -243,10 +217,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
-
-// ===============================================================
-// ANALYTICS CARD
-// ===============================================================
 
 class _AnalyticsCard extends StatelessWidget {
   const _AnalyticsCard({
@@ -261,7 +231,7 @@ class _AnalyticsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final color = Theme.of(context).colorScheme.primary;
 
     return Card(
       child: Padding(
@@ -269,16 +239,16 @@ class _AnalyticsCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: theme.colorScheme.primary),
-            const SizedBox(height: 14),
+            Icon(icon, color: color),
+            const SizedBox(height: 12),
             Text(
               value,
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 4),
-            Text(title, style: theme.textTheme.bodySmall),
+            Text(title, style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
       ),
@@ -286,9 +256,34 @@ class _AnalyticsCard extends StatelessWidget {
   }
 }
 
-// ===============================================================
-// ACTION CARD
-// ===============================================================
+class _RevenueCard extends StatelessWidget {
+  const _RevenueCard({required this.revenueAsync});
+
+  final AsyncValue<double> revenueAsync;
+
+  @override
+  Widget build(BuildContext context) {
+    final revenue = revenueAsync.when(
+      loading: () => '...',
+      error: (_, _) => '0',
+      data: (value) => value.toStringAsFixed(2),
+    );
+
+    return Card(
+      child: ListTile(
+        leading: const CircleAvatar(child: Icon(Icons.payments_outlined)),
+        title: const Text('Today\'s Revenue'),
+        subtitle: const Text('Total value of delivered milk'),
+        trailing: Text(
+          'Rs. $revenue',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+}
 
 class _ActionCard extends StatelessWidget {
   const _ActionCard({
@@ -305,8 +300,6 @@ class _ActionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -316,16 +309,20 @@ class _ActionCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, size: 32, color: theme.colorScheme.primary),
-              const SizedBox(height: 16),
+              Icon(
+                icon,
+                size: 32,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(height: 14),
               Text(
                 title,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 4),
-              Text(subtitle, style: theme.textTheme.bodySmall),
+              Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
             ],
           ),
         ),

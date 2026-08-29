@@ -1,10 +1,14 @@
 import 'package:dairyfarmabuka/core/database/app_database.dart';
 import 'package:dairyfarmabuka/models/customer.dart';
+import 'package:dairyfarmabuka/repositories/customer_repository_contract.dart';
 import 'package:sqflite/sqflite.dart';
 
-class CustomerRepository {
+class CustomerRepository implements BaseCustomerRepository {
   final AppDatabase _appDatabase = AppDatabase.instance;
+
   Future<Database> get _db async => await _appDatabase.database;
+
+  @override
   Future<int> addCustomer(Customer customer) async {
     final db = await _db;
     return await db.insert(
@@ -14,6 +18,7 @@ class CustomerRepository {
     );
   }
 
+  @override
   Future<List<Customer>> getCustomers() async {
     final db = await _db;
     final result = await db.query(
@@ -25,35 +30,41 @@ class CustomerRepository {
     return result.map((e) => Customer.fromMap(e)).toList();
   }
 
-  Future<int> setActive(int id, bool isActive) async {
+  @override
+  Future<void> setActive(Object id, bool isActive) async {
     final db = await _db;
-    return db.update(
+    final customerId = _requireIntId(id);
+    await db.update(
       'customers',
       {'isActive': isActive ? 1 : 0},
       where: 'id=?',
-      whereArgs: [id],
+      whereArgs: [customerId],
     );
   }
 
-  Future<Customer?> getCustomerById(int id) async {
+  @override
+  Future<Customer?> getCustomerById(Object id) async {
     final db = await _db;
+    final customerId = _requireIntId(id);
     final result = await db.query(
       'customers',
       where: 'id = ?',
-      whereArgs: [id],
+      whereArgs: [customerId],
       limit: 1,
     );
     if (result.isEmpty) return null;
     return Customer.fromMap(result.first);
   }
 
-  Future<void> deleteCustomer(int id) async {
+  @override
+  Future<void> deleteCustomer(Object id) async {
     final db = await _db;
+    final customerId = _requireIntId(id);
     await db.update(
       'customers',
       {'isActive': 0},
       where: 'id=?',
-      whereArgs: [id],
+      whereArgs: [customerId],
     );
   }
 
@@ -75,6 +86,7 @@ class CustomerRepository {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
+  @override
   Future<List<Customer>> searchCustomers(String keyword) async {
     final db = await _db;
     final result = await db.query(
@@ -86,13 +98,24 @@ class CustomerRepository {
     return result.map((e) => Customer.fromMap(e)).toList();
   }
 
-  Future<int> updateCustomer(Customer customer) async {
+  @override
+  Future<void> updateCustomer(Customer customer, {Object? id}) async {
     final db = await _db;
-    return db.update(
+    final customerId = customer.id ?? _requireIntId(id);
+    await db.update(
       'customers',
       customer.toMap(),
       where: 'id = ?',
-      whereArgs: [customer.id],
+      whereArgs: [customerId],
     );
+  }
+
+  int _requireIntId(Object? id) {
+    if (id is int) return id;
+    if (id is String) {
+      final parsed = int.tryParse(id);
+      if (parsed != null) return parsed;
+    }
+    throw StateError('SQLite customer id must be an integer. Got: $id');
   }
 }

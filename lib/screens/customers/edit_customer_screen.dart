@@ -1,5 +1,5 @@
 import 'package:dairyfarmabuka/models/customer.dart';
-import 'package:dairyfarmabuka/providers/firestore_customer_provider.dart';
+import 'package:dairyfarmabuka/providers/customer_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -66,13 +66,6 @@ class _EditCustomerScreenState extends ConsumerState<EditCustomerScreen> {
       return;
     }
 
-    final firebaseId = widget.customer.firebaseId;
-
-    if (firebaseId == null || firebaseId.isEmpty) {
-      _showMessage('Firebase customer ID is missing.');
-      return;
-    }
-
     final customer = widget.customer.copyWith(
       name: _nameController.text.trim(),
       phone: _phoneController.text.trim(),
@@ -86,9 +79,7 @@ class _EditCustomerScreenState extends ConsumerState<EditCustomerScreen> {
       _saving = true;
     });
 
-    final success = await ref
-        .read(firestoreCustomerProvider.notifier)
-        .updateCustomer(customer, id: firebaseId);
+    final success = await ref.read(customerProvider.notifier).updateCustomer(customer);
 
     if (!mounted) return;
 
@@ -101,7 +92,7 @@ class _EditCustomerScreenState extends ConsumerState<EditCustomerScreen> {
 
       Navigator.pop(context, true);
     } else {
-      final error = ref.read(firestoreCustomerProvider).error;
+      final error = ref.read(customerProvider).error;
 
       _showMessage(error?.toString() ?? 'Failed to update customer.');
     }

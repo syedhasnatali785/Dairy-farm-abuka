@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/customer.dart';
 import '../../providers/customer_provider.dart';
 import 'add_customer_screen.dart';
+import 'edit_customer_screen.dart';
 
 class CustomerListScreen extends ConsumerStatefulWidget {
   const CustomerListScreen({super.key});
@@ -33,7 +34,7 @@ class _CustomerListScreenState extends ConsumerState<CustomerListScreen> {
   Future<void> _editCustomer(Customer customer) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => AddCustomerScreen()),
+      MaterialPageRoute(builder: (_) => EditCustomerScreen(customer: customer)),
     );
   }
 
@@ -64,18 +65,12 @@ class _CustomerListScreenState extends ConsumerState<CustomerListScreen> {
 
     if (confirmed != true) return;
 
-    final success = await ref
-        .read(customerProvider.notifier)
-        .deleteCustomer(customer.id!);
+    await ref.read(customerProvider.notifier).deleteCustomer(customer.id!);
 
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          success ? '${customer.name} deleted' : 'Failed to delete customer',
-        ),
-      ),
+      SnackBar(content: Text('${customer.name} deleted')),
     );
   }
 
