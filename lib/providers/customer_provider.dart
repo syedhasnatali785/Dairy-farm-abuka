@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/customer.dart';
@@ -5,19 +6,83 @@ import '../repositories/customer_repository.dart';
 import '../repositories/customer_repository_contract.dart';
 import '../repositories/firestore_customer_repository.dart';
 
-final customerDataSourceProvider = StateProvider<CustomerDataSource>(
-  (ref) => CustomerDataSource.sqlite,
-);
+class UnifiedCustomerRepository implements BaseCustomerRepository {
+  final CustomerRepository local = CustomerRepository();
+  final FirestoreCustomerRepository remote = FirestoreCustomerRepository();
+
+  @override
+  Future<dynamic> addCustomer(Customer customer) async {
+    await Future.wait([local.addCustomer(customer), _remoteAdd(customer)]);
+    return true;
+  }
+
+  @override
+  Future<List<Customer>> getCustomers() async {
+    try {
+      return await local.getCustomers();
+    } catch (_) {
+      return await remote.getCustomers();
+    }
+  }
+
+  @override
+  Future<void> updateCustomer(Customer customer, {Object? id}) async {
+    await Future.wait([
+      local.updateCustomer(
+        customer,
+        id: id ?? customer.id ?? customer.firebaseId,
+      ),
+      _remoteUpdate(customer, id ?? customer.firebaseId ?? customer.id),
+    ]);
+  }
+
+  @override
+  Future<void> deleteCustomer(Object id) async {
+    await Future.wait([local.deleteCustomer(id), _remoteDelete(id)]);
+  }
+
+  @override
+  Future<void> setActive(Object id, bool isActive) async {
+    await Future.wait([
+      local.setActive(id, isActive),
+      _remoteSetActive(id, isActive),
+    ]);
+  }
+
+  @override
+  Future<Customer?> getCustomerById(Object id) async {
+    return await local.getCustomerById(id) ?? await remote.getCustomerById(id);
+  }
+
+  @override
+  Future<List<Customer>> searchCustomers(String keyword) async {
+    return await local.searchCustomers(keyword);
+  }
+
+  Future<void> _remoteAdd(Customer customer) async {
+    if (FirebaseAuth.instance.currentUser == null) return;
+    await remote.addCustomer(customer);
+  }
+
+  Future<void> _remoteUpdate(Customer customer, Object? id) async {
+    if (FirebaseAuth.instance.currentUser == null) return;
+    if (id == null) return;
+    await remote.updateCustomer(customer, id: id);
+  }
+
+  Future<void> _remoteDelete(Object id) async {
+    if (FirebaseAuth.instance.currentUser == null) return;
+    await remote.deleteCustomer(id);
+  }
+
+  Future<void> _remoteSetActive(Object id, bool isActive) async {
+    if (FirebaseAuth.instance.currentUser == null) return;
+    await remote.setActive(id, isActive);
+  }
+}
 
 final customerRepositoryProvider = Provider<BaseCustomerRepository>((ref) {
-  final dataSource = ref.watch(customerDataSourceProvider);
-
-  switch (dataSource) {
-    case CustomerDataSource.sqlite:
-      return CustomerRepository();
-    case CustomerDataSource.firebase:
-      return FirestoreCustomerRepository();
-  }
+  return UnifiedCustomerRepository();
 });
 
 final customerProvider =
@@ -36,7 +101,6 @@ class CustomerNotifier extends AsyncNotifier<List<Customer>> {
 
   Future<void> refresh() async {
     state = const AsyncLoading();
-
     state = await AsyncValue.guard(_repository.getCustomers);
   }
 
@@ -90,7 +154,9 @@ class CustomerNotifier extends AsyncNotifier<List<Customer>> {
   Future<bool> restoreCustomer(Object id) async {
     try {
       if (id is int) {
-        await (ref.read(customerRepositoryProvider) as CustomerRepository)
+        await (ref.read(customerRepositoryProvider)
+                as UnifiedCustomerRepository)
+            .local
             .restoreCustomer(id);
       } else {
         await _repository.setActive(id, true);
@@ -111,7 +177,6 @@ class CustomerNotifier extends AsyncNotifier<List<Customer>> {
     if (keyword.trim().isEmpty) {
       return state.valueOrNull ?? [];
     }
-
     return _repository.searchCustomers(keyword.trim());
   }
 }

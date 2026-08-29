@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,14 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../models/customer.dart';
 import '../../models/milk_entry.dart';
 import '../../providers/customer_provider.dart';
-import '../../providers/owner_provider.dart';
 import '../../providers/milk_provider.dart';
-import '../../repositories/milk_repository.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/data/latest_all.dart' as tz;
-import 'package:timezone/timezone.dart' as tz;
-
-// Use shared provider from providers/milk_provider.dart
+import '../../providers/owner_provider.dart';
 
 class AddMilkScreen extends ConsumerStatefulWidget {
   const AddMilkScreen({super.key});
@@ -26,23 +18,15 @@ class AddMilkScreen extends ConsumerStatefulWidget {
 class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
   final _formKey = GlobalKey<FormState>();
   final _productionController = TextEditingController();
-
-  bool _isSaving = false;
-  bool _productionTouched = false;
-
-  /// true  = selected customers BOUGHT
-  /// false = selected customers DID NOT BUY
-  bool _boughtMode = true;
-
   final Set<int> _selectedCustomerIds = {};
   final Map<int, double> _customerAmounts = {};
 
-  bool _notificationsInitialized = false;
+  bool _isSaving = false;
+  bool _productionTouched = false;
+  bool _boughtMode = true;
 
-  double _productionValue() {
-    final value = double.tryParse(_productionController.text.trim());
-    return value ?? 0;
-  }
+  double _productionValue() =>
+      double.tryParse(_productionController.text.trim()) ?? 0;
 
   void _applyProductionValue(double value) {
     final normalized = value < 0 ? 0 : value;
@@ -51,88 +35,6 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
       offset: _productionController.text.length,
     );
     _productionTouched = true;
-  }
-
-  // ===============================================================
-  // NOTIFICATIONS
-  // ===============================================================
-
-  static final FlutterLocalNotificationsPlugin _notificationsPlugin =
-      FlutterLocalNotificationsPlugin();
-
-  Future<void> _initNotifications() async {
-    tz.initializeTimeZones();
-
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const ios = DarwinInitializationSettings();
-
-    await _notificationsPlugin.initialize(
-      settings: const InitializationSettings(android: android, iOS: ios),
-    );
-
-    // Request runtime permissions (Android 13+ / iOS) — without this,
-    // zonedSchedule can silently fail to actually notify the user.
-    await _notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.requestNotificationsPermission();
-
-    await _notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin
-        >()
-        ?.requestPermissions(alert: true, badge: true, sound: true);
-  }
-
-  Future<void> _scheduleDailyReminder({int hour = 8, int minute = 0}) async {
-    final pending = await _notificationsPlugin.pendingNotificationRequests();
-    final exists = pending.any((p) => p.id == 0);
-
-    if (exists) {
-      await _notificationsPlugin.cancel(id: 0);
-      if (mounted) _showMessage('Daily reminder cancelled');
-      return;
-    }
-
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduled = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      hour,
-      minute,
-    );
-    if (scheduled.isBefore(now)) {
-      scheduled = scheduled.add(const Duration(days: 1));
-    }
-
-    const androidDetails = AndroidNotificationDetails(
-      'milk_reminder',
-      'Milk Reminders',
-      importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
-    );
-
-    const details = NotificationDetails(android: androidDetails);
-
-    await _notificationsPlugin.zonedSchedule(
-      id: 0,
-      title: 'Milk Reminder',
-      body: 'Don\'t forget to record today\'s milk.',
-      scheduledDate: scheduled,
-      notificationDetails: details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-    );
-
-    if (mounted) {
-      _showMessage(
-        'Daily reminder scheduled at '
-        '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}',
-      );
-    }
   }
 
   void _adjustProduction(double delta) {
@@ -151,35 +53,6 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
     }
   }
 
-  @override
-  void initState() {
-    super.initState();
-    // Initialize once, not on every build().
-    _initNotifications().then((_) {
-      if (mounted) {
-        setState(() {
-          _notificationsInitialized = true;
-        });
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _productionController.dispose();
-    super.dispose();
-  }
-
-  void _changeMode(bool mode) {
-    if (_boughtMode == mode) return;
-
-    setState(() {
-      _boughtMode = mode;
-      _selectedCustomerIds.clear();
-      _customerAmounts.clear(); // avoid stale amounts leaking across modes
-    });
-  }
-
   void _toggleCustomer(int customerId) {
     setState(() {
       if (_selectedCustomerIds.contains(customerId)) {
@@ -187,22 +60,21 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
         _customerAmounts.remove(customerId);
       } else {
         _selectedCustomerIds.add(customerId);
-        // initialize amount for this customer from current provider value
-        final customers = ref.read(customerProvider).valueOrNull;
-        Customer? foundCustomer;
-        if (customers != null) {
-          for (final c in customers) {
-            if (c.id == customerId) {
-              foundCustomer = c;
-              break;
-            }
-          }
-        }
-        if (foundCustomer != null) {
-          _customerAmounts[customerId] = foundCustomer.dailyMilk;
-        } else {
-          _customerAmounts[customerId] = 0.0;
-        }
+        final customer = ref
+            .read(customerProvider)
+            .valueOrNull
+            ?.firstWhere(
+              (c) => c.id == customerId,
+              orElse: () => Customer(
+                name: '',
+                phone: '',
+                address: '',
+                dailyMilk: 0,
+                pricePerLiter: 0,
+                customerType: 'Daily',
+              ),
+            );
+        _customerAmounts[customerId] = customer?.dailyMilk ?? 0;
       }
     });
   }
@@ -216,9 +88,9 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
               .where((customer) => customer.id != null)
               .map((customer) => customer.id!),
         );
-      for (final c in customers) {
-        if (c.id != null) {
-          _customerAmounts[c.id!] = c.dailyMilk;
+      for (final customer in customers) {
+        if (customer.id != null) {
+          _customerAmounts[customer.id!] = customer.dailyMilk;
         }
       }
     });
@@ -242,99 +114,60 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
   Future<void> _saveMilkEntry(List<Customer> customers) async {
     FocusScope.of(context).unfocus();
 
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-
+    if (!_formKey.currentState!.validate()) return;
     if (customers.isEmpty) {
       _showMessage('No active customers available.');
       return;
     }
 
     final totalProduction = double.tryParse(_productionController.text.trim());
-
     if (totalProduction == null || totalProduction <= 0) {
       _showMessage('Enter a valid production amount.');
       return;
     }
 
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
 
     try {
       final today = _dateOnly(DateTime.now());
-
-      // Prevent duplicate entry for the same day.
       final existingEntry = await ref
           .read(milkRepositoryProvider)
+          .local
           .getEntryByDate(today);
-
       if (existingEntry != null) {
-        if (!mounted) return;
-
         _showMessage('Milk entry for today already exists.');
-
         return;
       }
 
-      final entry = MilkEntry(date: today, totalProduction: totalProduction);
-
-      // Build amounts based on the actual selection + mode, instead of
-      // ignoring them. In "Bought" mode, selected customers get their
-      // entered amount and everyone else is recorded as 0 (didn't buy).
-      // In "Not Bought" mode it's inverted: selected customers get 0,
-      // everyone else gets their entered/default amount.
       final selectedCustomers = <int, double>{
         for (final customer in customers)
-          if (customer.id != null) customer.id!: _resolvedAmountFor(customer),
+          if (customer.id != null)
+            customer.id!: _customerAmounts[customer.id!] ?? customer.dailyMilk,
       };
 
       await ref
           .read(milkRepositoryProvider)
           .saveDay(
-            entry: entry,
+            entry: MilkEntry(date: today, totalProduction: totalProduction),
             customers: customers,
             selectedCustomers: selectedCustomers,
           );
 
       if (!mounted) return;
-
-      _showMessage("Today's milk entry saved successfully.");
-
+      _showMessage('Today\'s milk entry saved successfully.');
       context.pop(true);
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-
       _showMessage('Unable to save milk entry. Please try again.');
     } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
+      if (mounted) setState(() => _isSaving = false);
     }
-  }
-
-  /// Resolves the amount to save for a given customer based on the
-  /// current delivery mode and whether they're selected.
-  double _resolvedAmountFor(Customer customer) {
-    final id = customer.id;
-    if (id == null) return 0.0;
-
-    final isSelected = _selectedCustomerIds.contains(id);
-    final didBuy = _boughtMode ? isSelected : !isSelected;
-
-    if (!didBuy) return 0.0;
-
-    return _customerAmounts[id] ?? customer.dailyMilk;
   }
 
   String _dateOnly(DateTime date) {
     final year = date.year.toString().padLeft(4, '0');
     final month = date.month.toString().padLeft(2, '0');
     final day = date.day.toString().padLeft(2, '0');
-
     return '$year-$month-$day';
   }
 
@@ -342,6 +175,12 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  void dispose() {
+    _productionController.dispose();
+    super.dispose();
   }
 
   @override
@@ -365,33 +204,31 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Add Milk'),
-        actions: [
-          IconButton(
-            tooltip: 'Toggle daily reminder',
-            onPressed: _notificationsInitialized
-                ? () async {
-                    await _scheduleDailyReminder();
-                  }
-                : null,
-            icon: const Icon(Icons.alarm),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Add Milk')),
       body: customersAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stackTrace) => _ErrorView(
-          onRetry: () {
-            ref.read(customerProvider.notifier).refresh();
-          },
-        ),
+        error: (_, __) =>
+            const Center(child: Text('Unable to load customers.')),
         data: (customers) {
           if (customers.isEmpty) {
-            return _EmptyCustomersView(
-              onAddCustomer: () {
-                context.push('/home/customers/add');
-              },
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.people_outline, size: 64),
+                    const SizedBox(height: 16),
+                    const Text('No active customers'),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: () => context.push('/home/customers/add'),
+                      icon: const Icon(Icons.person_add_outlined),
+                      label: const Text('Add Customer'),
+                    ),
+                  ],
+                ),
+              ),
             );
           }
 
@@ -400,31 +237,21 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                // =================================================
-                // DATE
-                // =================================================
                 Card(
                   child: ListTile(
                     leading: const Icon(Icons.calendar_today_outlined),
                     title: const Text('Date'),
-                    subtitle: Text(_formattedToday()),
+                    subtitle: Text(_dateOnly(DateTime.now())),
                   ),
                 ),
-
                 const SizedBox(height: 16),
-
-                // =================================================
-                // TOTAL PRODUCTION
-                // =================================================
                 Text(
                   'Total Production',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-
                 const SizedBox(height: 8),
-
                 ownerAsync.when(
                   loading: () => const SizedBox.shrink(),
                   error: (_, __) => const SizedBox.shrink(),
@@ -436,9 +263,8 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                         child: Row(
                           children: [
                             IconButton(
-                              onPressed: () async {
-                                await _updateOwnerPrediction(prediction - 1);
-                              },
+                              onPressed: () async =>
+                                  _updateOwnerPrediction(prediction - 1),
                               icon: const Icon(Icons.remove_circle_outline),
                             ),
                             Expanded(
@@ -450,9 +276,8 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                               ),
                             ),
                             IconButton(
-                              onPressed: () async {
-                                await _updateOwnerPrediction(prediction + 1);
-                              },
+                              onPressed: () async =>
+                                  _updateOwnerPrediction(prediction + 1),
                               icon: const Icon(Icons.add_circle_outline),
                             ),
                           ],
@@ -461,9 +286,7 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                     );
                   },
                 ),
-
                 const SizedBox(height: 12),
-
                 Row(
                   children: [
                     IconButton.filledTonal(
@@ -477,9 +300,7 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                           decimal: true,
                         ),
                         textInputAction: TextInputAction.done,
-                        onChanged: (_) {
-                          _productionTouched = true;
-                        },
+                        onChanged: (_) => _productionTouched = true,
                         decoration: const InputDecoration(
                           labelText: 'Total Milk Production',
                           hintText: 'e.g. 150',
@@ -487,16 +308,11 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                           prefixIcon: Icon(Icons.water_drop_outlined),
                         ),
                         validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
+                          if (value == null || value.trim().isEmpty)
                             return 'Enter total production';
-                          }
-
                           final amount = double.tryParse(value.trim());
-
-                          if (amount == null || amount <= 0) {
+                          if (amount == null || amount <= 0)
                             return 'Enter a valid quantity';
-                          }
-
                           return null;
                         },
                       ),
@@ -507,56 +323,36 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                     ),
                   ],
                 ),
-
                 const SizedBox(height: 24),
-
-                // =================================================
-                // MODE
-                // =================================================
                 Text(
                   'Delivery Mode',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-
                 const SizedBox(height: 8),
-
                 SegmentedButton<bool>(
+                  selected: {_boughtMode},
+                  onSelectionChanged: _isSaving
+                      ? null
+                      : (selection) => setState(() {
+                          _boughtMode = selection.first;
+                          _selectedCustomerIds.clear();
+                        }),
                   segments: const [
-                    ButtonSegment<bool>(
+                    ButtonSegment(
                       value: true,
                       label: Text('Bought'),
                       icon: Icon(Icons.check_circle_outline),
                     ),
-                    ButtonSegment<bool>(
+                    ButtonSegment(
                       value: false,
                       label: Text('Not Bought'),
                       icon: Icon(Icons.cancel_outlined),
                     ),
                   ],
-                  selected: {_boughtMode},
-                  onSelectionChanged: _isSaving
-                      ? null
-                      : (selection) {
-                          _changeMode(selection.first);
-                        },
                 ),
-
-                const SizedBox(height: 8),
-
-                Text(
-                  _boughtMode
-                      ? 'Select customers who bought milk. Unselected customers will be marked Not Bought.'
-                      : 'Select customers who did not buy milk. Unselected customers will be marked Bought.',
-                  style: theme.textTheme.bodySmall,
-                ),
-
                 const SizedBox(height: 16),
-
-                // =================================================
-                // SELECTION ACTIONS
-                // =================================================
                 Row(
                   children: [
                     Expanded(
@@ -578,12 +374,7 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                     ),
                   ],
                 ),
-
                 const SizedBox(height: 20),
-
-                // =================================================
-                // CUSTOMER COUNT
-                // =================================================
                 Row(
                   children: [
                     Expanded(
@@ -596,30 +387,10 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                         ),
                       ),
                     ),
-                    IconButton(
-                      onPressed: _isSaving ? null : () => _clearSelection(),
-                      tooltip: 'Remove all selected customers',
-                      icon: const Icon(Icons.remove_circle_outline),
-                    ),
-                    Text(
-                      '${_selectedCustomerIds.length}/${customers.length}',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: _isSaving ? null : () => _selectAll(customers),
-                      tooltip: 'Select all customers',
-                      icon: const Icon(Icons.add_circle_outline),
-                    ),
+                    Text('${_selectedCustomerIds.length}/${customers.length}'),
                   ],
                 ),
-
                 const SizedBox(height: 8),
-
-                // =================================================
-                // CUSTOMERS
-                // =================================================
                 Card(
                   clipBehavior: Clip.antiAlias,
                   child: Column(
@@ -629,25 +400,52 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                         index < customers.length;
                         index++
                       ) ...[
-                        _CustomerTile(
-                          customer: customers[index],
-                          selected: _selectedCustomerIds.contains(
+                        CheckboxListTile(
+                          value: _selectedCustomerIds.contains(
                             customers[index].id,
                           ),
-                          enabled: !_isSaving,
-                          amount: customers[index].id != null
-                              ? _customerAmounts[customers[index].id!] ??
-                                    customers[index].dailyMilk
-                              : customers[index].dailyMilk,
-                          onIncrease: (id) => _adjustCustomerAmount(id, 0.5),
-                          onDecrease: (id) => _adjustCustomerAmount(id, -0.5),
-                          onTap: () {
-                            final id = customers[index].id;
-
-                            if (id != null) {
-                              _toggleCustomer(id);
-                            }
-                          },
+                          onChanged: _isSaving
+                              ? null
+                              : (_) {
+                                  final id = customers[index].id;
+                                  if (id != null) _toggleCustomer(id);
+                                },
+                          title: Text(customers[index].name),
+                          subtitle: Text(
+                            '${customers[index].dailyMilk.toStringAsFixed(1)} L • ${customers[index].pricePerLiter.toStringAsFixed(0)}/L',
+                          ),
+                          secondary: SizedBox(
+                            width: 120,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                IconButton(
+                                  onPressed:
+                                      _isSaving || customers[index].id == null
+                                      ? null
+                                      : () => _adjustCustomerAmount(
+                                          customers[index].id!,
+                                          -0.5,
+                                        ),
+                                  icon: const Icon(Icons.remove_circle_outline),
+                                ),
+                                Text(
+                                  '${(_customerAmounts[customers[index].id!] ?? customers[index].dailyMilk).toStringAsFixed(1)} L',
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                                IconButton(
+                                  onPressed:
+                                      _isSaving || customers[index].id == null
+                                      ? null
+                                      : () => _adjustCustomerAmount(
+                                          customers[index].id!,
+                                          0.5,
+                                        ),
+                                  icon: const Icon(Icons.add_circle_outline),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                         if (index != customers.length - 1)
                           const Divider(height: 1),
@@ -655,12 +453,7 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 24),
-
-                // =================================================
-                // SAVE
-                // =================================================
                 SizedBox(
                   height: 52,
                   child: FilledButton.icon(
@@ -677,170 +470,10 @@ class _AddMilkScreenState extends ConsumerState<AddMilkScreen> {
                     label: Text(_isSaving ? 'Saving...' : 'Save Milk Entry'),
                   ),
                 ),
-
-                const SizedBox(height: 16),
               ],
             ),
           );
         },
-      ),
-    );
-  }
-
-  String _formattedToday() {
-    final now = DateTime.now();
-
-    final day = now.day.toString().padLeft(2, '0');
-    final month = now.month.toString().padLeft(2, '0');
-
-    return '$day/$month/${now.year}';
-  }
-}
-
-// ===============================================================
-// CUSTOMER TILE
-// ===============================================================
-
-class _CustomerTile extends StatelessWidget {
-  const _CustomerTile({
-    required this.customer,
-    required this.selected,
-    required this.enabled,
-    required this.onTap,
-    required this.amount,
-    required this.onIncrease,
-    required this.onDecrease,
-  });
-
-  final Customer customer;
-  final bool selected;
-  final bool enabled;
-  final VoidCallback onTap;
-  final double amount;
-  final void Function(int) onIncrease;
-  final void Function(int) onDecrease;
-
-  @override
-  Widget build(BuildContext context) {
-    return CheckboxListTile(
-      value: selected,
-      onChanged: enabled ? (_) => onTap() : null,
-      title: Text(customer.name),
-      subtitle: Text('${customer.dailyMilk} L • ${customer.pricePerLiter}/L'),
-      secondary: SizedBox(
-        width: 120,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircleAvatar(
-              radius: 18,
-              child: Text(
-                customer.name.trim().isEmpty
-                    ? '?'
-                    : customer.name.trim().substring(0, 1).toUpperCase(),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  iconSize: 20,
-                  onPressed: enabled && customer.id != null
-                      ? () => onDecrease(customer.id!)
-                      : null,
-                  icon: const Icon(Icons.remove_circle_outline),
-                ),
-                Flexible(
-                  child: Text(
-                    '${amount.toStringAsFixed(1)} L',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-                IconButton(
-                  iconSize: 20,
-                  onPressed: enabled && customer.id != null
-                      ? () => onIncrease(customer.id!)
-                      : null,
-                  icon: const Icon(Icons.add_circle_outline),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ===============================================================
-// ERROR VIEW
-// ===============================================================
-
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.onRetry});
-
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 52),
-            const SizedBox(height: 12),
-            const Text('Unable to load customers.'),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ===============================================================
-// EMPTY CUSTOMERS VIEW
-// ===============================================================
-
-class _EmptyCustomersView extends StatelessWidget {
-  const _EmptyCustomersView({required this.onAddCustomer});
-
-  final VoidCallback onAddCustomer;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.people_outline, size: 64),
-            const SizedBox(height: 16),
-            Text(
-              'No active customers',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Add customers before recording milk deliveries.',
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: onAddCustomer,
-              icon: const Icon(Icons.person_add_outlined),
-              label: const Text('Add Customer'),
-            ),
-          ],
-        ),
       ),
     );
   }
